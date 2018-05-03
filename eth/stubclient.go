@@ -29,7 +29,7 @@ type StubClient struct {
 	ClaimRoot         map[[32]byte]bool
 	ClaimCounter      int
 	SubLogsCh         chan types.Log
-	JobsMap           map[string]*lpTypes.Job
+	JobsMap           map[int]*lpTypes.Job
 	BlockNum          *big.Int
 	BlockHashToReturn common.Hash
 	Claims            map[int]*lpTypes.Claim
@@ -124,7 +124,7 @@ func (c *StubClient) BroadcasterDeposit(broadcaster common.Address) (*big.Int, e
 	return big.NewInt(0), nil
 }
 func (e *StubClient) GetJob(jobID *big.Int) (*lpTypes.Job, error) {
-	return nil, nil
+	return e.JobsMap[int(jobID.Int64())], nil
 }
 func (c *StubClient) GetClaim(jobID *big.Int, claimID *big.Int) (*lpTypes.Claim, error) {
 	return c.Claims[int(claimID.Int64())], nil

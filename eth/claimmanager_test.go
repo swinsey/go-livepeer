@@ -1,6 +1,7 @@
 package eth
 
 import (
+	"database/sql"
 	"fmt"
 	"math/big"
 	"testing"
@@ -10,9 +11,10 @@ import (
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/golang/glog"
+	"github.com/livepeer/go-livepeer/common"
 	ethTypes "github.com/livepeer/go-livepeer/eth/types"
 	"github.com/livepeer/go-livepeer/ipfs"
-	ffmpeg "github.com/livepeer/lpms/ffmpeg"
+	"github.com/livepeer/lpms/ffmpeg"
 )
 
 func newJob() *ethTypes.Job {
@@ -237,6 +239,72 @@ func TestClaimVerifyAndDistributeFees(t *testing.T) {
 	}
 	if _, ok := ethClient.ClaimRoot[[32]byte(root2.Hash)]; !ok {
 		t.Errorf("Expecting claim to have root %v, but got %v", [32]byte(root2.Hash), ethClient.ClaimRoot)
+	}
+}
+
+func TestClaimRecovery(t *testing.T) {
+	// Not very useful right now until we stub out the eth backend.
+	ethClient := &StubClient{
+		ClaimStart: make([]*big.Int, 0), ClaimEnd: make([]*big.Int, 0),
+		ClaimJid: make([]*big.Int, 0), ClaimRoot: make(map[[32]byte]bool),
+		Claims:  make(map[int]*ethTypes.Claim),
+		JobsMap: make(map[int]*ethTypes.Job)}
+
+	// set up db
+	dbp := fmt.Sprintf("file:%s?mode=memory&cache=shared&_foreign_keys=1", t.Name())
+	db, err := common.InitDB(dbp)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer db.Close()
+	dbraw, err := sql.Open("sqlite3", dbp)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer dbraw.Close()
+
+	ejob := newJob()
+	ethClient.JobsMap[int(ejob.JobId.Int64())] = ejob
+	job := common.NewDBJob(ejob.JobId, ejob.StreamId, ejob.MaxPricePerSegment,
+		ejob.Profiles, ejob.BroadcasterAddress, ethcommon.Address{},
+		big.NewInt(1), big.NewInt(2))
+
+	db.InsertJob(job)
+	ir := func(j *common.DBJob, seq int64) {
+		err := db.InsertReceipt(big.NewInt(j.ID), seq, "",
+			[]byte(""), []byte(""), []byte(""), time.Now(), time.Now())
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	ir(job, 0)
+	ir(job, 1)
+	ir(job, 3)
+	ir(job, 4)
+	ir(job, 6)
+	ir(job, 7)
+	ir(job, 8)
+	// Now sanity check we don't have claimIDs assigned
+	stmt := "SELECT count(distinct claimID) FROM receipts"
+	row := dbraw.QueryRow(stmt)
+	var val int
+	err = row.Scan(&val)
+	if err != nil || val != 0 {
+		t.Errorf("Unexpected result from sanity check; error %v claimids %v", err, val)
+	}
+	// actually recover
+	err = RecoverClaims(ethClient, &ipfs.StubIpfsApi{}, db)
+	if err != nil {
+		t.Error(err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	// now ensure we have claimIDs
+	row = dbraw.QueryRow(stmt)
+	err = row.Scan(&val)
+	if err != nil || val != 3 {
+		t.Errorf("Unexpected result from recovery; error %v claimids %v", err, val)
 	}
 }
 
